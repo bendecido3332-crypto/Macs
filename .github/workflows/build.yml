@@ -1,0 +1,76 @@
+name: Build IPA
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Preparar codigo
+        run: |
+          unzip -o EscritorioIA-macOS*.zip -d unz
+          mkdir -p Sources
+          cp unz/EscritorioIA/*.swift Sources/
+
+      - name: Crear proyecto de Xcode
+        run: |
+          brew install xcodegen
+          cat > project.yml <<'EOF'
+          name: EscritorioIA
+          options:
+            deploymentTarget:
+              iOS: "26.0"
+          targets:
+            EscritorioIA:
+              type: application
+              platform: iOS
+              sources: [Sources]
+              settings:
+                base:
+                  PRODUCT_BUNDLE_IDENTIFIER: com.tunombre.escritorioia
+                  TARGETED_DEVICE_FAMILY: "1,2"
+                  SWIFT_VERSION: "5.0"
+              info:
+                path: Info.plist
+                properties:
+                  CFBundleDisplayName: EscritorioIA
+                  UILaunchScreen: {}
+                  UIStatusBarHidden: true
+                  NSMicrophoneUsageDescription: Para hablar con el asistente.
+                  NSSpeechRecognitionUsageDescription: Para convertir tu voz en texto.
+                  UIRequiredDeviceCapabilities: [arm64]
+                  UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
+                  "UISupportedInterfaceOrientations~ipad": [UIInterfaceOrientationPortrait, UIInterfaceOrientationPortraitUpsideDown, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
+          EOF
+          xcodegen generate
+
+      - name: Compilar sin firmar
+        run: |
+          set -o pipefail
+          xcodebuild -version
+          xcodebuild -project EscritorioIA.xcodeproj -scheme EscritorioIA \
+            -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            build 2>&1 | tee build.log
+
+      - name: Mostrar errores
+        if: failure()
+        run: grep -E "error:" build.log | sort -u | head -40 || true
+
+      - name: Crear IPA
+        run: |
+          APP=$(find build/Build/Products -maxdepth 3 -name "EscritorioIA.app" | head -1)
+          mkdir Payload
+          cp -R "$APP" Payload/
+          zip -qry EscritorioIA.ipa Payload
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: EscritorioIA-ipa
+          path: EscritorioIA.ipa
